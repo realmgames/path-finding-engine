@@ -23,64 +23,120 @@
 */
 
 using UnityEngine;
-using System.Collections;
 using System.Collections.Generic;
 
 namespace RealmGames.PathFinding
 {
-    public delegate bool CanTraverse(Vector2Int p);
+    public delegate bool CanTraverse(Vector2Int cellPosition);
+    public delegate Vector2Int[] Moves(Vector2Int cellPosition);
 
     public class PathFindingEngine
     {
-        private Vector2Int m_size;
+        private RectInt m_bounds;
+        private Vector2Int m_offset;
         private bool[] m_visited;
         private CanTraverse m_canTraverse;
+        private Moves m_moves;
 
-        public PathFindingEngine(Vector2Int size, CanTraverse canTraverse)
+        public PathFindingEngine(RectInt bounds, CanTraverse canTraverse, Moves moves)
         {
-            m_size = size;
+            m_bounds = bounds;
+            m_offset = new Vector2Int(-bounds.position.x, -bounds.position.y);
             m_canTraverse = canTraverse;
-            m_visited = new bool[m_size.x * m_size.y];
+            m_moves = moves;
+            m_visited = new bool[bounds.width * bounds.height];
+        }
+
+        public PathFindingEngine(Vector2Int size, CanTraverse canTraverse, Moves moves) : this(new RectInt(Vector2Int.zero, size),
+                                                                                  canTraverse,
+                                                                                  moves) { }
+
+        public PathFindingEngine(Vector2Int size, CanTraverse canTraverse) : this(size, canTraverse, RectangleMovement) { }
+
+        public static Vector2Int[] RectangleMovement(Vector2Int p)
+        {
+            return new Vector2Int[] {
+                Vector2Int.right + p,
+                Vector2Int.left + p,
+                Vector2Int.up + p,
+                Vector2Int.down + p
+            };
+        }
+
+        public static Vector2Int[] DiagonalMovement(Vector2Int p)
+        {
+            return new Vector2Int[] {
+                Vector2Int.right + p,
+                Vector2Int.left + p,
+                Vector2Int.up + p,
+                Vector2Int.down + p,
+                Vector2Int.up + Vector2Int.left + p,
+                Vector2Int.up + Vector2Int.right + p,
+                Vector2Int.down + Vector2Int.left + p,
+                Vector2Int.down + Vector2Int.right + p,
+            };
+        }
+
+        public static Vector2Int[] HexagonMovement(Vector2Int p)
+        {
+            if (p.y % 2 == 0)
+            {
+                return new Vector2Int[]
+                {
+                    Vector2Int.right + p,
+                    Vector2Int.left + p,
+                    new Vector2Int(-1, 1) + p,
+                    new Vector2Int( 0, 1) + p,
+                    new Vector2Int(-1,-1) + p,
+                    new Vector2Int( 0,-1) + p,
+                };
+            }
+            else
+            {
+                return new Vector2Int[]
+                {
+                    Vector2Int.right + p,
+                    Vector2Int.left + p,
+                    new Vector2Int( 0, 1) + p,
+                    new Vector2Int( 1, 1) + p,
+                    new Vector2Int( 0,-1) + p,
+                    new Vector2Int( 1,-1) + p,
+                };
+            }
+        }
+
+        private int PosToIndex(Vector2Int p)
+        {
+            int x = p.x + m_offset.x;
+            int y = p.y + m_offset.y;
+            return x + (y * m_bounds.width);
         }
 
         public bool InBounds(Vector2Int p)
         {
-            return p.x >= 0 && p.x < m_size.x &&
-                    p.y >= 0 && p.y < m_size.y;
+            return m_bounds.Contains(p);
         }
 
         public bool HasVisited(Vector2Int p)
         {
-            return m_visited[p.x + (p.y * m_size.x)];
+            return m_visited[PosToIndex(p)];
+        }
+
+        void MarkVisited(Vector2Int p)
+        {
+            m_visited[PosToIndex(p)] = true;
         }
 
         int Cost(CanTraverse canTraverse, Vector2Int p)
         {
             int cost = 0;
 
-            Vector2Int right = p + Vector2Int.right;
-            Vector2Int left = p + Vector2Int.left;
-            Vector2Int up = p + Vector2Int.up;
-            Vector2Int down = p + Vector2Int.down;
+            Vector2Int[] moves = m_moves(p);
 
-            if (InBounds(right))
-                cost += canTraverse(right) ? 0 : 2;
-
-            if (InBounds(left))
-                cost += canTraverse(left) ? 0 : 2;
-
-            if (InBounds(up))
-                cost += canTraverse(up) ? 0 : 2;
-
-            if (InBounds(down))
-                cost += canTraverse(down) ? 0 : 2;
+            foreach(Vector2Int move in moves)
+                    cost += (InBounds(move) && canTraverse(move)) ? 0 : 2;
             
             return cost;
-        }
-
-        void MarkVisited(Vector2Int p)
-        {
-            m_visited[p.x + (p.y * m_size.x)] = true;
         }
 
         void ClearVisited() {
@@ -92,69 +148,32 @@ namespace RealmGames.PathFinding
         {
             int step = current.step + 1;
 
-            Vector2Int right = current.position + Vector2Int.right;
-            Vector2Int left = current.position + Vector2Int.left;
-            Vector2Int up = current.position + Vector2Int.up;
-            Vector2Int down = current.position + Vector2Int.down;
+            Vector2Int[] moves = m_moves(current.position);
 
-            if (InBounds(right) && canTraverse(right) && !HasVisited(right))
+            foreach (Vector2Int move in moves)
             {
-                MarkVisited(right);
-                int cost = Cost(canTraverse, right);
-                nodes.Add(new PathNode(current, right, step + cost, goal));
-            }
+                if (InBounds(move) && canTraverse(move) && !HasVisited(move))
+                {
+                    MarkVisited(move);
 
-            if (InBounds(left) && canTraverse(left) && !HasVisited(left))
-            {
-                MarkVisited(left);
-                int cost = Cost(canTraverse, left);
-                nodes.Add(new PathNode(current, left, step + cost, goal));
-            }
+                    int cost = Cost(canTraverse, move);
 
-            if (InBounds(up) && canTraverse(up) && !HasVisited(up))
-            {
-                MarkVisited(up);
-                int cost = Cost(canTraverse, up);
-                nodes.Add(new PathNode(current, up, step + cost, goal));
-            }
-
-            if (InBounds(down) && canTraverse(down) && !HasVisited(down))
-            {
-                MarkVisited(down);
-                int cost = Cost(canTraverse, down);
-                nodes.Add(new PathNode(current, down, step + cost, goal));
+                    nodes.Add(new PathNode(current, move, step + cost, goal));
+                }
             }
         }
 
         void WalkNode(CanTraverse canTraverse, Vector2Int current, List<Vector2Int> nodes)
         {
-            Vector2Int right = current + Vector2Int.right;
-            Vector2Int left = current + Vector2Int.left;
-            Vector2Int up = current + Vector2Int.up;
-            Vector2Int down = current + Vector2Int.down;
+            Vector2Int[] moves = m_moves(current);
 
-            if (InBounds(right) && canTraverse(right) && !HasVisited(right))
+            foreach (Vector2Int move in moves)
             {
-                MarkVisited(right);
-                nodes.Add(right);
-            }
-
-            if (InBounds(left) && canTraverse(left) && !HasVisited(left))
-            {
-                MarkVisited(left);
-                nodes.Add(left);
-            }
-
-            if (InBounds(up) && canTraverse(up) && !HasVisited(up))
-            {
-                MarkVisited(up);
-                nodes.Add(up);
-            }
-
-            if (InBounds(down) && canTraverse(down) && !HasVisited(down))
-            {
-                MarkVisited(down);
-                nodes.Add(down);
+                if (InBounds(move) && canTraverse(move) && !HasVisited(move))
+                {
+                    MarkVisited(move);
+                    nodes.Add(move);
+                }
             }
         }
 
@@ -162,9 +181,10 @@ namespace RealmGames.PathFinding
         {
             ClearVisited();
 
-            List<Vector2Int> nodes = new List<Vector2Int>();
-
-            nodes.Add(start);
+            List<Vector2Int> nodes = new List<Vector2Int>
+            {
+                start
+            };
 
             while (nodes.Count > 0)
             {
